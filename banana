@@ -1,0 +1,4548 @@
+//+------------------------------------------------------------------+
+//|                                                     Aegis V1.mq5 |
+//|                                  Copyright 2026, MetaQuotes Ltd. |
+//|                                             https://www.mql5.com |
+//+------------------------------------------------------------------+
+#property copyright "Copyright 2026, MetaQuotes Ltd."
+#property link      "https://www.mql5.com"
+#property version   "1.00"
+//+------------------------------------------------------------------+
+//|                     AEGIS Core Types                             |
+//|                     Version 1.0                                  |
+//+------------------------------------------------------------------+
+
+#pragma once
+
+
+//============================================================
+// MARKET REGIME
+//============================================================
+
+enum MARKET_REGIME
+{
+   REGIME_UNKNOWN = 0,
+
+   REGIME_STRONG_BULL,
+   REGIME_BULL,
+
+   REGIME_RANGE,
+
+   REGIME_BEAR,
+   REGIME_STRONG_BEAR,
+
+   REGIME_BREAKOUT,
+
+   REGIME_EXHAUSTION
+};
+
+
+//============================================================
+// STRUCTURE STATE
+//============================================================
+
+struct StructureState
+{
+
+   bool higherHigh;
+
+   bool higherLow;
+
+   bool lowerHigh;
+
+   bool lowerLow;
+
+
+   bool breakOfStructure;
+
+   bool changeOfCharacter;
+
+
+   double trendStrength;
+
+
+   double lastSwingHigh;
+
+   double lastSwingLow;
+
+};
+
+
+
+//============================================================
+// VWAP STATE
+//============================================================
+
+struct VWAPState
+{
+
+   double dailyVWAP;
+
+   double weeklyVWAP;
+
+   double monthlyVWAP;
+
+
+   double distanceATR;
+
+
+   double slope;
+
+
+   bool aboveDaily;
+
+   bool aboveWeekly;
+
+   bool aboveMonthly;
+
+
+};
+
+
+
+//============================================================
+// VOLUME PROFILE STATE
+//============================================================
+
+struct VolumeProfileState
+{
+
+   double poc;
+
+   double vah;
+
+   double val;
+
+
+   bool abovePOC;
+
+   bool insideValue;
+
+
+   bool nearHighVolumeNode;
+
+   bool nearLowVolumeNode;
+
+
+};
+
+
+
+//============================================================
+// MOMENTUM STATE
+//============================================================
+
+struct MomentumState
+{
+
+   double macd;
+
+   double signal;
+
+   double histogram;
+
+
+   double momentumScore;
+
+
+   bool bullish;
+
+   bool bearish;
+
+};
+
+
+
+//============================================================
+// VOLATILITY STATE
+//============================================================
+
+struct VolatilityState
+{
+
+   double atr;
+
+   double atrAverage;
+
+
+   double volatilityRatio;
+
+
+   bool expanding;
+
+   bool contracting;
+
+};
+
+
+
+//============================================================
+// COMPLETE MARKET STATE
+//============================================================
+
+struct MarketState
+{
+
+   MARKET_REGIME regime;
+
+
+   double regimeConfidence;
+
+
+   StructureState structure;
+
+
+   VWAPState vwap;
+
+
+   VolumeProfileState volumeProfile;
+
+
+   MomentumState momentum;
+
+
+   VolatilityState volatility;
+
+
+
+   // scoring system
+
+   double trendScore;
+
+   double structureScore;
+
+   double vwapScore;
+
+   double volumeScore;
+
+   double momentumScore;
+
+   double volatilityScore;
+
+
+
+   double totalScore;
+
+
+
+   bool allowLong;
+
+   bool allowShort;
+
+   bool allowTrade;
+
+
+};
+//+------------------------------------------------------------------+
+//|                     AEGIS Market Cache                           |
+//+------------------------------------------------------------------+
+
+#pragma once
+
+
+class MarketCache
+{
+
+
+private:
+
+
+   MqlRates rates[];
+
+
+   int barsLoaded;
+
+
+
+public:
+
+
+   bool Update(int requestedBars)
+   {
+
+
+      ArraySetAsSeries(
+         rates,
+         true
+      );
+
+
+      int copied =
+      CopyRates(
+         _Symbol,
+         _Period,
+         0,
+         requestedBars,
+         rates
+      );
+
+
+      if(copied <=0)
+      {
+         Print(
+         "AEGIS Cache Error: ",
+         GetLastError()
+         );
+
+         return false;
+      }
+
+
+
+      barsLoaded=copied;
+
+
+      return true;
+
+   }
+
+
+
+//------------------------------------------------------------
+// ACCESSORS
+//------------------------------------------------------------
+
+
+   double Open(int shift)
+   {
+
+      if(shift>=barsLoaded)
+         return 0;
+
+      return rates[shift].open;
+
+   }
+
+
+
+   double High(int shift)
+   {
+
+      if(shift>=barsLoaded)
+         return 0;
+
+      return rates[shift].high;
+
+   }
+
+
+
+
+   double Low(int shift)
+   {
+
+      if(shift>=barsLoaded)
+         return 0;
+
+      return rates[shift].low;
+
+   }
+
+
+
+
+   double Close(int shift)
+   {
+
+      if(shift>=barsLoaded)
+         return 0;
+
+      return rates[shift].close;
+
+   }
+
+
+
+
+   long Volume(int shift)
+   {
+
+      if(shift>=barsLoaded)
+         return 0;
+
+
+      return rates[shift].tick_volume;
+
+   }
+
+
+
+   datetime Time(int shift)
+   {
+
+      if(shift>=barsLoaded)
+         return 0;
+
+
+      return rates[shift].time;
+
+   }
+
+
+
+   int Size()
+   {
+
+      return barsLoaded;
+
+   }
+
+
+};
+//+------------------------------------------------------------------+
+//|                     AEGIS ATR Engine                             |
+//|                     Volatility Intelligence                      |
+//+------------------------------------------------------------------+
+
+#pragma once
+
+#include "CoreTypes.mqh"
+#include "MarketCache.mqh"
+
+
+
+class ATREngine
+{
+
+
+private:
+
+
+   MarketCache *market;
+
+
+   int atrPeriod;
+
+
+   double currentATR;
+
+   double averageATR;
+
+
+public:
+
+
+   ATREngine()
+   {
+
+      market=NULL;
+
+      atrPeriod=14;
+
+      currentATR=0;
+
+      averageATR=0;
+
+   }
+
+
+
+//------------------------------------------------------------
+// INITIALIZE
+//------------------------------------------------------------
+
+   void Init(
+      MarketCache &cache,
+      int period=14
+   )
+   {
+
+      market=&cache;
+
+      atrPeriod=period;
+
+   }
+
+
+
+
+//------------------------------------------------------------
+// UPDATE VOLATILITY DATA
+//------------------------------------------------------------
+
+   bool Update()
+   {
+
+
+      if(market==NULL)
+         return false;
+
+
+
+      double atrSum=0;
+
+
+      int sample=50;
+
+
+
+      for(int i=1;i<=sample;i++)
+      {
+
+
+         double tr =
+         TrueRange(i);
+
+
+
+         atrSum+=tr;
+
+
+      }
+
+
+
+      averageATR =
+      atrSum/sample;
+
+
+
+      currentATR =
+      CalculateATR();
+
+
+
+      return true;
+
+   }
+
+
+
+//------------------------------------------------------------
+// TRUE RANGE
+//------------------------------------------------------------
+
+   double TrueRange(int shift)
+   {
+
+
+      double high =
+      market.High(shift);
+
+
+
+      double low =
+      market.Low(shift);
+
+
+
+      double previousClose =
+      market.Close(shift+1);
+
+
+
+      double range1 =
+      high-low;
+
+
+      double range2 =
+      MathAbs(
+      high-previousClose
+      );
+
+
+      double range3 =
+      MathAbs(
+      low-previousClose
+      );
+
+
+
+      return MathMax(
+         range1,
+         MathMax(
+            range2,
+            range3
+         )
+      );
+
+   }
+
+
+
+
+
+//------------------------------------------------------------
+// ATR CALCULATION
+//------------------------------------------------------------
+
+   double CalculateATR()
+   {
+
+
+      double sum=0;
+
+
+
+      for(int i=1;i<=atrPeriod;i++)
+      {
+
+         sum+=TrueRange(i);
+
+      }
+
+
+      return sum/atrPeriod;
+
+
+   }
+
+
+
+
+//------------------------------------------------------------
+// VOLATILITY RATIO
+//------------------------------------------------------------
+
+   double VolatilityRatio()
+   {
+
+      if(averageATR<=0)
+         return 0;
+
+
+      return currentATR/
+             averageATR;
+
+   }
+
+
+
+//------------------------------------------------------------
+// STATE GENERATION
+//------------------------------------------------------------
+
+   VolatilityState GetState()
+   {
+
+
+      VolatilityState state;
+
+
+
+      state.atr=currentATR;
+
+
+      state.atrAverage=
+      averageATR;
+
+
+
+      state.volatilityRatio=
+      VolatilityRatio();
+
+
+
+      state.expanding =
+      state.volatilityRatio > 1.15;
+
+
+
+      state.contracting =
+      state.volatilityRatio < 0.85;
+
+
+
+      return state;
+
+   }
+
+
+
+//------------------------------------------------------------
+// VOLATILITY QUALITY SCORE
+//------------------------------------------------------------
+
+   double Score()
+   {
+
+
+      double ratio=
+      VolatilityRatio();
+
+
+
+      double score=0;
+
+
+
+      /*
+      
+      Ideal:
+      
+      1.0 - 1.5
+      
+      Healthy movement
+      
+      */
+
+
+      if(ratio>=1.0 &&
+         ratio<=1.5)
+      {
+         score+=5;
+      }
+
+
+
+      // Expansion bonus
+
+      if(ratio>1.15)
+      {
+         score+=2;
+      }
+
+
+
+      // Too dead
+
+      if(ratio<0.7)
+      {
+         score-=3;
+      }
+
+
+
+      // Extreme volatility
+
+      if(ratio>2.5)
+      {
+         score-=5;
+      }
+
+
+
+      return MathMax(
+         0,
+         MathMin(
+            5,
+            score
+         )
+      );
+
+   }
+
+
+
+};
+//+------------------------------------------------------------------+
+//|                 AEGIS Market Structure Engine                    |
+//+------------------------------------------------------------------+
+
+#pragma once
+
+
+#include "CoreTypes.mqh"
+#include "MarketCache.mqh"
+
+
+
+class MarketStructureEngine
+{
+
+
+private:
+
+
+   MarketCache *market;
+
+
+
+   double lastSwingHigh;
+
+   double lastSwingLow;
+
+
+   double previousSwingHigh;
+
+   double previousSwingLow;
+
+
+
+   bool bullishStructure;
+
+   bool bearishStructure;
+
+
+
+public:
+
+
+   MarketStructureEngine()
+   {
+
+      market=NULL;
+
+      lastSwingHigh=0;
+
+      lastSwingLow=0;
+
+      previousSwingHigh=0;
+
+      previousSwingLow=0;
+
+
+      bullishStructure=false;
+
+      bearishStructure=false;
+
+   }
+
+
+
+
+//------------------------------------------------------------
+// INITIALIZE
+//------------------------------------------------------------
+
+void Init(MarketCache &cache)
+{
+
+   market=&cache;
+
+}
+
+
+
+//------------------------------------------------------------
+// MAIN UPDATE
+//------------------------------------------------------------
+
+bool Update()
+{
+
+
+   if(market==NULL)
+      return false;
+
+
+
+   FindSwings();
+
+
+   return true;
+
+}
+
+
+
+//------------------------------------------------------------
+// SWING HIGH DETECTION
+//------------------------------------------------------------
+
+bool IsSwingHigh(int shift)
+{
+
+
+   double current =
+   market.High(shift);
+
+
+
+   for(int i=1;i<=2;i++)
+   {
+
+
+      if(current <= market.High(shift+i))
+         return false;
+
+
+
+      if(current <= market.High(shift-i))
+         return false;
+
+
+   }
+
+
+   return true;
+
+}
+
+
+
+//------------------------------------------------------------
+// SWING LOW DETECTION
+//------------------------------------------------------------
+
+bool IsSwingLow(int shift)
+{
+
+
+   double current =
+   market.Low(shift);
+
+
+
+   for(int i=1;i<=2;i++)
+   {
+
+      if(current >= market.Low(shift+i))
+         return false;
+
+
+      if(current >= market.Low(shift-i))
+         return false;
+
+   }
+
+
+   return true;
+
+}
+
+
+
+
+//------------------------------------------------------------
+// FIND STRUCTURE POINTS
+//------------------------------------------------------------
+
+void FindSwings()
+{
+
+
+   for(int i=10;i<50;i++)
+   {
+
+
+      if(IsSwingHigh(i))
+      {
+
+
+         previousSwingHigh =
+         lastSwingHigh;
+
+
+
+         lastSwingHigh =
+         market.High(i);
+
+
+
+         break;
+
+      }
+
+
+   }
+
+
+
+   for(int i=10;i<50;i++)
+   {
+
+
+      if(IsSwingLow(i))
+      {
+
+
+         previousSwingLow =
+         lastSwingLow;
+
+
+
+         lastSwingLow =
+         market.Low(i);
+
+
+
+         break;
+
+      }
+
+
+   }
+
+
+
+}
+
+
+
+
+//------------------------------------------------------------
+// GENERATE STRUCTURE STATE
+//------------------------------------------------------------
+
+StructureState GetState()
+{
+
+
+   StructureState state;
+
+
+
+   state.higherHigh=false;
+
+   state.higherLow=false;
+
+   state.lowerHigh=false;
+
+   state.lowerLow=false;
+
+
+
+   state.breakOfStructure=false;
+
+   state.changeOfCharacter=false;
+
+
+
+   state.lastSwingHigh =
+   lastSwingHigh;
+
+
+   state.lastSwingLow =
+   lastSwingLow;
+
+
+
+//------------------------------------------------
+// CLASSIFY SWINGS
+//------------------------------------------------
+
+
+   if(lastSwingHigh >
+      previousSwingHigh)
+   {
+
+      state.higherHigh=true;
+
+   }
+
+
+
+   if(lastSwingLow >
+      previousSwingLow)
+   {
+
+      state.higherLow=true;
+
+   }
+
+
+
+   if(lastSwingHigh <
+      previousSwingHigh)
+   {
+
+      state.lowerHigh=true;
+
+   }
+
+
+
+   if(lastSwingLow <
+      previousSwingLow)
+   {
+
+      state.lowerLow=true;
+
+   }
+
+
+
+//------------------------------------------------
+// TREND DIRECTION
+//------------------------------------------------
+
+
+   if(state.higherHigh &&
+      state.higherLow)
+   {
+
+
+      bullishStructure=true;
+
+      bearishStructure=false;
+
+
+   }
+
+
+
+   if(state.lowerHigh &&
+      state.lowerLow)
+   {
+
+
+      bearishStructure=true;
+
+      bullishStructure=false;
+
+
+   }
+
+
+
+   state.trendStrength =
+   CalculateStrength(state);
+
+
+
+   return state;
+
+}
+
+
+
+
+
+//------------------------------------------------------------
+// STRUCTURE SCORE
+//------------------------------------------------------------
+
+double CalculateStrength(
+StructureState &state
+)
+{
+
+
+   double score=0;
+
+
+
+   if(state.higherHigh)
+      score+=25;
+
+
+
+   if(state.higherLow)
+      score+=25;
+
+
+
+   if(state.lowerHigh)
+      score+=25;
+
+
+
+   if(state.lowerLow)
+      score+=25;
+
+
+
+   return score;
+
+}
+
+
+
+
+};
+//+------------------------------------------------------------------+
+//|                    AEGIS VWAP Engine                             |
+//|                    Institutional Value Engine                    |
+//+------------------------------------------------------------------+
+
+#pragma once
+
+
+#include "CoreTypes.mqh"
+#include "MarketCache.mqh"
+
+
+
+class VWAPEngine
+{
+
+
+private:
+
+
+   MarketCache *market;
+
+
+
+   double dailyVWAP;
+
+   double weeklyVWAP;
+
+   double monthlyVWAP;
+
+
+
+   double dailySlope;
+
+
+
+public:
+
+
+   VWAPEngine()
+   {
+
+      market=NULL;
+
+      dailyVWAP=0;
+
+      weeklyVWAP=0;
+
+      monthlyVWAP=0;
+
+      dailySlope=0;
+
+   }
+
+
+
+//------------------------------------------------------------
+// INITIALIZE
+//------------------------------------------------------------
+
+void Init(MarketCache &cache)
+{
+
+   market=&cache;
+
+}
+
+
+
+//------------------------------------------------------------
+// UPDATE
+//------------------------------------------------------------
+
+bool Update()
+{
+
+
+   if(market==NULL)
+      return false;
+
+
+
+   dailyVWAP =
+   CalculateVWAP(
+      PERIOD_D1
+   );
+
+
+   weeklyVWAP =
+   CalculateVWAP(
+      PERIOD_W1
+   );
+
+
+   monthlyVWAP =
+   CalculateVWAP(
+      PERIOD_MN1
+   );
+
+
+
+   dailySlope =
+   CalculateSlope();
+
+
+
+   return true;
+
+}
+
+
+
+
+
+//------------------------------------------------------------
+// VWAP CALCULATION
+//------------------------------------------------------------
+
+double CalculateVWAP(
+ENUM_TIMEFRAMES timeframe
+)
+{
+
+
+   MqlRates data[];
+
+
+   ArraySetAsSeries(
+      data,
+      true
+   );
+
+
+
+   int copied =
+   CopyRates(
+      _Symbol,
+      timeframe,
+      0,
+      500,
+      data
+   );
+
+
+
+   if(copied<=0)
+      return 0;
+
+
+
+   double volumeSum=0;
+
+   double priceVolumeSum=0;
+
+
+
+   for(int i=0;i<copied;i++)
+   {
+
+
+      double typicalPrice =
+      (
+       data[i].high +
+       data[i].low +
+       data[i].close
+      ) / 3.0;
+
+
+
+      double volume =
+      data[i].tick_volume;
+
+
+
+      priceVolumeSum +=
+      typicalPrice * volume;
+
+
+
+      volumeSum +=
+      volume;
+
+
+   }
+
+
+
+   if(volumeSum==0)
+      return 0;
+
+
+
+   return
+   priceVolumeSum /
+   volumeSum;
+
+
+}
+
+
+
+//------------------------------------------------------------
+// VWAP SLOPE
+//------------------------------------------------------------
+
+double CalculateSlope()
+{
+
+
+   double previous =
+   CalculateVWAP(
+      PERIOD_D1
+   );
+
+
+
+   if(previous==0)
+      return 0;
+
+
+
+   return
+   dailyVWAP -
+   previous;
+
+
+}
+
+
+
+//------------------------------------------------------------
+// GET STATE
+//------------------------------------------------------------
+
+VWAPState GetState()
+{
+
+
+   VWAPState state;
+
+
+
+   state.dailyVWAP =
+   dailyVWAP;
+
+
+
+   state.weeklyVWAP =
+   weeklyVWAP;
+
+
+
+   state.monthlyVWAP =
+   monthlyVWAP;
+
+
+
+   double price =
+   market.Close(0);
+
+
+
+
+   state.aboveDaily =
+   price > dailyVWAP;
+
+
+
+   state.aboveWeekly =
+   price > weeklyVWAP;
+
+
+
+   state.aboveMonthly =
+   price > monthlyVWAP;
+
+
+
+   state.slope =
+   dailySlope;
+
+
+
+   state.distanceATR =
+   CalculateDistance();
+
+
+
+   return state;
+
+}
+
+
+
+//------------------------------------------------------------
+// DISTANCE FROM VALUE
+//------------------------------------------------------------
+
+double CalculateDistance()
+{
+
+
+   double price =
+   market.Close(0);
+
+
+
+   if(dailyVWAP==0)
+      return 0;
+
+
+
+   double atr =
+   MathAbs(
+   market.High(1)
+   -
+   market.Low(1)
+   );
+
+
+
+   if(atr==0)
+      return 0;
+
+
+
+   return
+   (price-dailyVWAP)
+   /
+   atr;
+
+
+}
+
+
+
+//------------------------------------------------------------
+// VWAP SCORE
+//------------------------------------------------------------
+
+double Score()
+{
+
+
+   double score=0;
+
+
+
+   double price =
+   market.Close(0);
+
+
+
+
+// Price alignment
+
+   if(price > dailyVWAP)
+      score+=5;
+
+
+
+   if(price > weeklyVWAP)
+      score+=5;
+
+
+
+   if(price > monthlyVWAP)
+      score+=5;
+
+
+
+// Slope
+
+   if(dailySlope>0)
+      score+=5;
+
+
+
+   return
+   MathMin(
+      score,
+      20
+   );
+
+
+}
+
+
+
+};
+//+------------------------------------------------------------------+
+//|                  AEGIS Volume Profile Engine                     |
+//|                  Auction Market Analysis                         |
+//+------------------------------------------------------------------+
+
+#pragma once
+
+
+#include "CoreTypes.mqh"
+#include "MarketCache.mqh"
+
+
+
+class VolumeProfileEngine
+{
+
+
+private:
+
+
+MarketCache *market;
+
+
+
+double priceStep;
+
+
+
+double poc;
+
+double vah;
+
+double val;
+
+
+
+double highVolumeNode;
+
+double lowVolumeNode;
+
+
+
+public:
+
+
+
+VolumeProfileEngine()
+{
+
+market=NULL;
+
+priceStep=0;
+
+poc=0;
+
+vah=0;
+
+val=0;
+
+highVolumeNode=0;
+
+lowVolumeNode=0;
+
+}
+
+
+
+//------------------------------------------------------------
+
+void Init(MarketCache &cache)
+{
+
+market=&cache;
+
+}
+
+
+
+//------------------------------------------------------------
+// MAIN UPDATE
+//------------------------------------------------------------
+
+bool Update()
+{
+
+
+if(market==NULL)
+return false;
+
+
+
+CalculateProfile();
+
+
+
+return true;
+
+
+}
+
+
+
+//------------------------------------------------------------
+// BUILD PROFILE
+//------------------------------------------------------------
+
+void CalculateProfile()
+{
+
+
+double highest =
+market.High(100);
+
+
+
+double lowest =
+market.Low(100);
+
+
+
+for(int i=100;i>=1;i--)
+{
+
+highest=MathMax(
+highest,
+market.High(i)
+);
+
+
+lowest=MathMin(
+lowest,
+market.Low(i)
+);
+
+}
+
+
+
+// price bucket size
+
+priceStep =
+(highest-lowest)
+/100.0;
+
+
+
+if(priceStep<=0)
+return;
+
+
+
+double volumeMap[];
+
+ArrayResize(
+volumeMap,
+100
+);
+
+
+
+ArrayInitialize(
+volumeMap,
+0
+);
+
+
+
+//------------------------------------------------
+// distribute volume
+//------------------------------------------------
+
+
+for(int i=1;i<100;i++)
+{
+
+
+double price =
+market.Close(i);
+
+
+
+int bucket =
+(int)
+(
+(price-lowest)
+/
+priceStep
+);
+
+
+
+if(bucket>=0 &&
+bucket<100)
+{
+
+
+volumeMap[bucket]
++=
+market.Volume(i);
+
+
+}
+
+
+}
+
+
+
+//------------------------------------------------
+// Find POC
+//------------------------------------------------
+
+
+double maxVolume=0;
+
+int pocIndex=0;
+
+
+
+for(int i=0;i<100;i++)
+{
+
+
+if(volumeMap[i]>maxVolume)
+{
+
+maxVolume=
+volumeMap[i];
+
+
+pocIndex=i;
+
+}
+
+
+}
+
+
+
+poc =
+lowest+
+(pocIndex*priceStep);
+
+
+
+//------------------------------------------------
+// Calculate Value Area
+//------------------------------------------------
+
+
+CalculateValueArea(
+volumeMap,
+lowest
+);
+
+
+
+}
+
+
+
+//------------------------------------------------------------
+// VALUE AREA CALCULATION
+//------------------------------------------------------------
+
+void CalculateValueArea(
+double &volume[],
+double lowest
+)
+{
+
+
+double total=0;
+
+
+for(int i=0;i<ArraySize(volume);i++)
+{
+
+total+=volume[i];
+
+}
+
+
+
+double target =
+total*0.70;
+
+
+
+double accumulated=0;
+
+
+
+int lowIndex=0;
+
+int highIndex=99;
+
+
+
+for(int i=0;i<ArraySize(volume);i++)
+{
+
+
+accumulated+=volume[i];
+
+
+if(accumulated>=target)
+{
+
+highIndex=i;
+
+break;
+
+}
+
+
+}
+
+
+
+
+val =
+lowest+
+(lowIndex*priceStep);
+
+
+
+vah =
+lowest+
+(highIndex*priceStep);
+
+
+
+}
+
+
+
+//------------------------------------------------------------
+// STATE OUTPUT
+//------------------------------------------------------------
+
+VolumeProfileState GetState()
+{
+
+
+VolumeProfileState state;
+
+
+
+double price =
+market.Close(0);
+
+
+
+state.poc=poc;
+
+
+state.vah=vah;
+
+
+state.val=val;
+
+
+
+state.abovePOC =
+price>poc;
+
+
+
+state.insideValue =
+(
+price<=vah &&
+price>=val
+);
+
+
+
+state.nearHighVolumeNode =
+false;
+
+
+state.nearLowVolumeNode =
+false;
+
+
+
+return state;
+
+
+}
+
+
+
+//------------------------------------------------------------
+// SCORE
+//------------------------------------------------------------
+
+double Score(bool bullish)
+{
+
+
+double score=0;
+
+
+double price =
+market.Close(0);
+
+
+
+// bullish context
+
+if(bullish)
+{
+
+
+if(price>poc)
+score+=5;
+
+
+if(price>vah)
+score+=5;
+
+
+}
+
+
+
+// bearish context
+
+else
+{
+
+
+if(price<poc)
+score+=5;
+
+
+if(price<val)
+score+=5;
+
+
+}
+
+
+
+return
+MathMin(
+score,
+15
+);
+
+
+}
+
+
+};
+//============================================================
+// LIQUIDITY STATE
+//============================================================
+
+struct LiquidityState
+{
+
+   double previousDayHigh;
+
+   double previousDayLow;
+
+
+   double previousWeekHigh;
+
+   double previousWeekLow;
+
+
+
+   bool buySideLiquidityTaken;
+
+   bool sellSideLiquidityTaken;
+
+
+
+   bool bullishSweep;
+
+   bool bearishSweep;
+
+
+
+   double liquidityScore;
+
+};
+//+------------------------------------------------------------------+
+//|                  AEGIS Liquidity Engine                          |
+//|                  Stop Hunt Detection                             |
+//+------------------------------------------------------------------+
+
+#pragma once
+
+
+#include "CoreTypes.mqh"
+#include "MarketCache.mqh"
+
+
+
+class LiquidityEngine
+{
+
+
+private:
+
+
+MarketCache *market;
+
+
+double previousDayHigh;
+
+double previousDayLow;
+
+
+double previousWeekHigh;
+
+double previousWeekLow;
+
+
+
+bool bullishSweep;
+
+bool bearishSweep;
+
+
+
+public:
+
+
+
+LiquidityEngine()
+{
+
+market=NULL;
+
+previousDayHigh=0;
+
+previousDayLow=0;
+
+previousWeekHigh=0;
+
+previousWeekLow=0;
+
+
+bullishSweep=false;
+
+bearishSweep=false;
+
+}
+
+
+
+//------------------------------------------------------------
+
+void Init(MarketCache &cache)
+{
+
+market=&cache;
+
+}
+
+
+
+//------------------------------------------------------------
+// UPDATE
+//------------------------------------------------------------
+
+bool Update()
+{
+
+if(market==NULL)
+return false;
+
+
+
+CalculateReferenceLevels();
+
+
+DetectSweeps();
+
+
+
+return true;
+
+}
+
+
+
+//------------------------------------------------------------
+// REFERENCE LEVELS
+//------------------------------------------------------------
+
+void CalculateReferenceLevels()
+{
+
+
+MqlRates day[];
+
+
+ArraySetAsSeries(
+day,
+true
+);
+
+
+
+CopyRates(
+_Symbol,
+PERIOD_D1,
+0,
+10,
+day
+);
+
+
+
+previousDayHigh =
+day[1].high;
+
+
+previousDayLow =
+day[1].low;
+
+
+
+MqlRates week[];
+
+
+ArraySetAsSeries(
+week,
+true
+);
+
+
+
+CopyRates(
+_Symbol,
+PERIOD_W1,
+0,
+10,
+week
+);
+
+
+
+previousWeekHigh =
+week[1].high;
+
+
+previousWeekLow =
+week[1].low;
+
+
+}
+
+
+
+//------------------------------------------------------------
+// SWEEP DETECTION
+//------------------------------------------------------------
+
+void DetectSweeps()
+{
+
+
+double currentHigh =
+market.High(1);
+
+
+
+double currentLow =
+market.Low(1);
+
+
+
+double currentClose =
+market.Close(1);
+
+
+
+//------------------------------------------------
+// Bearish liquidity sweep
+//------------------------------------------------
+
+
+// Price takes highs,
+// then closes back below
+
+
+if(
+currentHigh > previousDayHigh
+&&
+currentClose < previousDayHigh
+)
+{
+
+bearishSweep=true;
+
+}
+
+
+
+
+//------------------------------------------------
+// Bullish liquidity sweep
+//------------------------------------------------
+
+
+// Price takes lows,
+// then closes back above
+
+
+if(
+currentLow < previousDayLow
+&&
+currentClose > previousDayLow
+)
+{
+
+bullishSweep=true;
+
+}
+
+
+}
+
+
+
+//------------------------------------------------------------
+// OUTPUT
+//------------------------------------------------------------
+
+LiquidityState GetState()
+{
+
+
+LiquidityState state;
+
+
+
+state.previousDayHigh =
+previousDayHigh;
+
+
+state.previousDayLow =
+previousDayLow;
+
+
+state.previousWeekHigh =
+previousWeekHigh;
+
+
+state.previousWeekLow =
+previousWeekLow;
+
+
+
+state.bullishSweep =
+bullishSweep;
+
+
+state.bearishSweep =
+bearishSweep;
+
+
+
+state.buySideLiquidityTaken =
+bearishSweep;
+
+
+state.sellSideLiquidityTaken =
+bullishSweep;
+
+
+
+state.liquidityScore =
+CalculateScore();
+
+
+
+return state;
+
+}
+
+
+
+//------------------------------------------------------------
+// SCORING
+//------------------------------------------------------------
+
+double CalculateScore()
+{
+
+
+double score=0;
+
+
+
+if(bullishSweep)
+score+=10;
+
+
+
+if(bearishSweep)
+score+=10;
+
+
+
+return MathMin(
+score,
+10
+);
+
+
+}
+
+
+
+};
+//============================================================
+// REGIME DETAILS
+//============================================================
+
+struct RegimeState
+{
+
+   MARKET_REGIME regime;
+
+
+   double bullProbability;
+
+   double bearProbability;
+
+   double rangeProbability;
+
+
+   double confidence;
+
+
+   string description;
+
+};
+//+------------------------------------------------------------------+
+//|                  AEGIS Regime Engine                             |
+//|                  Market Environment Classifier                   |
+//+------------------------------------------------------------------+
+
+#pragma once
+
+
+#include "CoreTypes.mqh"
+
+
+
+class RegimeEngine
+{
+
+
+private:
+
+
+StructureState structure;
+
+VWAPState vwap;
+
+VolatilityState volatility;
+
+VolumeProfileState volume;
+
+LiquidityState liquidity;
+
+
+
+RegimeState state;
+
+
+
+public:
+
+
+
+void Update(
+
+StructureState _structure,
+
+VWAPState _vwap,
+
+VolatilityState _volatility,
+
+VolumeProfileState _volume,
+
+LiquidityState _liquidity
+
+)
+{
+
+
+structure=_structure;
+
+vwap=_vwap;
+
+volatility=_volatility;
+
+volume=_volume;
+
+liquidity=_liquidity;
+
+
+
+Calculate();
+
+}
+
+
+
+
+//------------------------------------------------------------
+// MAIN CLASSIFICATION
+//------------------------------------------------------------
+
+
+void Calculate()
+{
+
+
+double bull=0;
+
+double bear=0;
+
+double range=0;
+
+
+
+//============================================================
+// STRUCTURE
+//============================================================
+
+
+if(structure.higherHigh)
+bull+=20;
+
+
+if(structure.higherLow)
+bull+=15;
+
+
+
+if(structure.lowerHigh)
+bear+=20;
+
+
+if(structure.lowerLow)
+bear+=15;
+
+
+
+
+//============================================================
+// VWAP ALIGNMENT
+//============================================================
+
+
+if(vwap.aboveDaily)
+bull+=5;
+
+else
+bear+=5;
+
+
+
+if(vwap.aboveWeekly)
+bull+=10;
+
+else
+bear+=10;
+
+
+
+if(vwap.aboveMonthly)
+bull+=5;
+
+else
+bear+=5;
+
+
+
+//============================================================
+// VOLATILITY
+//============================================================
+
+
+if(volatility.expanding)
+{
+
+bull+=5;
+
+bear+=5;
+
+}
+
+
+
+if(volatility.contracting)
+{
+
+range+=20;
+
+}
+
+
+
+
+//============================================================
+// VALUE POSITION
+//============================================================
+
+
+if(volume.insideValue)
+{
+
+range+=15;
+
+}
+
+
+
+if(volume.abovePOC)
+{
+
+bull+=5;
+
+}
+
+else
+
+{
+
+bear+=5;
+
+}
+
+
+
+//============================================================
+// LIQUIDITY EVENTS
+//============================================================
+
+
+if(liquidity.bullishSweep)
+{
+
+bull+=10;
+
+}
+
+
+
+if(liquidity.bearishSweep)
+{
+
+bear+=10;
+
+}
+
+
+
+
+//============================================================
+// NORMALIZE
+//============================================================
+
+
+double total =
+bull+
+bear+
+range;
+
+
+
+if(total<=0)
+return;
+
+
+
+state.bullProbability =
+(bull/total)*100;
+
+
+
+state.bearProbability =
+(bear/total)*100;
+
+
+
+state.rangeProbability =
+(range/total)*100;
+
+
+
+state.confidence =
+MathMax(
+state.bullProbability,
+MathMax(
+state.bearProbability,
+state.rangeProbability
+)
+);
+
+
+
+//============================================================
+// FINAL REGIME
+//============================================================
+
+
+
+if(state.bullProbability>=70)
+{
+
+if(state.bullProbability>=85)
+
+state.regime =
+REGIME_STRONG_BULL;
+
+else
+
+state.regime =
+REGIME_BULL;
+
+
+state.description=
+"BULLISH ENVIRONMENT";
+
+
+}
+
+
+
+else if(state.bearProbability>=70)
+
+{
+
+
+if(state.bearProbability>=85)
+
+state.regime =
+REGIME_STRONG_BEAR;
+
+
+else
+
+state.regime =
+REGIME_BEAR;
+
+
+
+state.description=
+"BEARISH ENVIRONMENT";
+
+
+}
+
+
+
+
+else if(state.rangeProbability>=60)
+
+{
+
+state.regime=
+REGIME_RANGE;
+
+
+state.description=
+"BALANCED MARKET";
+
+
+}
+
+
+else
+
+{
+
+state.regime=
+REGIME_UNKNOWN;
+
+
+state.description=
+"UNCLEAR CONDITIONS";
+
+
+}
+
+
+}
+
+
+
+//------------------------------------------------------------
+
+RegimeState GetState()
+{
+
+return state;
+
+}
+
+
+};
+//============================================================
+// TRADE DECISION STATE
+//============================================================
+
+struct ConfidenceState
+{
+
+   double totalScore;
+
+
+   double longScore;
+
+   double shortScore;
+
+
+
+   bool allowLong;
+
+   bool allowShort;
+
+   bool allowTrade;
+
+
+
+   string grade;
+
+};
+
+//+------------------------------------------------------------------+
+//|                AEGIS Confidence Engine                          |
+//|                Multi-System Decision Layer                      |
+//+------------------------------------------------------------------+
+
+#pragma once
+
+
+#include "CoreTypes.mqh"
+
+
+
+class ConfidenceEngine
+{
+
+
+private:
+
+
+ConfidenceState state;
+
+
+
+public:
+
+
+//------------------------------------------------------------
+// CALCULATE
+//------------------------------------------------------------
+
+
+void Calculate(
+
+RegimeState regime,
+
+StructureState structure,
+
+VWAPState vwap,
+
+VolumeProfileState volume,
+
+LiquidityState liquidity,
+
+MomentumState momentum
+
+)
+{
+
+
+double longScore=0;
+
+double shortScore=0;
+
+
+
+//============================================================
+// REGIME
+//============================================================
+
+
+if(
+regime.regime ==
+REGIME_STRONG_BULL
+)
+{
+
+longScore+=30;
+
+}
+
+
+else if(
+regime.regime ==
+REGIME_BULL
+)
+{
+
+longScore+=20;
+
+}
+
+
+
+if(
+regime.regime ==
+REGIME_STRONG_BEAR
+)
+{
+
+shortScore+=30;
+
+}
+
+
+else if(
+regime.regime ==
+REGIME_BEAR
+)
+{
+
+shortScore+=20;
+
+}
+
+
+
+//============================================================
+// STRUCTURE
+//============================================================
+
+
+if(structure.higherHigh)
+longScore+=10;
+
+
+if(structure.higherLow)
+longScore+=10;
+
+
+
+if(structure.lowerHigh)
+shortScore+=10;
+
+
+if(structure.lowerLow)
+shortScore+=10;
+
+
+
+//============================================================
+// VWAP
+//============================================================
+
+
+if(vwap.aboveDaily)
+longScore+=5;
+
+else
+shortScore+=5;
+
+
+
+if(vwap.aboveWeekly)
+longScore+=5;
+
+else
+shortScore+=5;
+
+
+
+if(vwap.aboveMonthly)
+longScore+=5;
+
+else
+shortScore+=5;
+
+
+
+//============================================================
+// VOLUME PROFILE
+//============================================================
+
+
+if(volume.abovePOC)
+longScore+=7;
+
+else
+shortScore+=7;
+
+
+
+if(volume.insideValue)
+{
+
+// neutral zone
+
+longScore+=2;
+
+shortScore+=2;
+
+}
+
+
+
+//============================================================
+// LIQUIDITY
+//============================================================
+
+
+if(liquidity.bullishSweep)
+longScore+=10;
+
+
+
+if(liquidity.bearishSweep)
+shortScore+=10;
+
+
+
+//============================================================
+// MOMENTUM
+//============================================================
+
+
+if(momentum.bullish)
+longScore+=5;
+
+
+
+if(momentum.bearish)
+shortScore+=5;
+
+
+
+//============================================================
+// FINAL
+//============================================================
+
+
+state.longScore =
+longScore;
+
+
+state.shortScore =
+shortScore;
+
+
+
+state.totalScore =
+MathMax(
+longScore,
+shortScore
+);
+
+
+
+//------------------------------------------------------------
+// Permission
+//------------------------------------------------------------
+
+
+state.allowLong =
+(
+longScore>=80 &&
+longScore>shortScore
+);
+
+
+
+state.allowShort =
+(
+shortScore>=80 &&
+shortScore>longScore
+);
+
+
+
+state.allowTrade =
+(
+state.allowLong ||
+state.allowShort
+);
+
+
+
+//------------------------------------------------------------
+// Grade
+//------------------------------------------------------------
+
+
+if(state.totalScore>=95)
+
+state.grade="A+";
+
+
+else if(state.totalScore>=90)
+
+state.grade="A";
+
+
+else if(state.totalScore>=85)
+
+state.grade="B";
+
+
+else if(state.totalScore>=80)
+
+state.grade="C";
+
+
+else
+
+state.grade="NO TRADE";
+
+
+
+}
+
+
+
+//------------------------------------------------------------
+
+ConfidenceState GetState()
+{
+
+return state;
+
+}
+
+
+};
+//============================================================
+// RISK STATE
+//============================================================
+
+struct RiskState
+{
+
+   double riskPercent;
+
+   double lotSize;
+
+
+   double stopLoss;
+
+   double takeProfit;
+
+
+
+   bool allowed;
+
+
+   string reason;
+
+};
+//+------------------------------------------------------------------+
+//|                    AEGIS Risk Engine                             |
+//|                    Capital Protection Layer                      |
+//+------------------------------------------------------------------+
+
+#pragma once
+
+
+#include "CoreTypes.mqh"
+
+
+
+class RiskEngine
+{
+
+
+private:
+
+
+double accountRisk;
+
+
+double maxDailyLoss;
+
+
+int maxLosses;
+
+
+int lossCount;
+
+
+
+public:
+
+
+RiskEngine()
+{
+
+accountRisk = 1.0;
+
+maxDailyLoss = 3.0;
+
+maxLosses = 3;
+
+lossCount = 0;
+
+}
+
+
+
+//------------------------------------------------------------
+// CONFIGURATION
+//------------------------------------------------------------
+
+void SetRisk(double percent)
+{
+
+accountRisk = percent;
+
+}
+
+
+
+
+void SetProtection(
+double dailyLoss,
+int losses
+)
+{
+
+maxDailyLoss=dailyLoss;
+
+maxLosses=losses;
+
+}
+
+
+
+//------------------------------------------------------------
+// CHECK PERMISSION
+//------------------------------------------------------------
+
+bool CheckPermission()
+{
+
+
+if(lossCount>=maxLosses)
+{
+
+return false;
+
+}
+
+
+
+return true;
+
+
+}
+
+
+
+//------------------------------------------------------------
+// ATR STOP CALCULATION
+//------------------------------------------------------------
+
+double CalculateStop(
+double atr,
+bool buy
+)
+{
+
+
+double price;
+
+
+
+if(buy)
+
+price =
+SymbolInfoDouble(
+_Symbol,
+SYMBOL_ASK
+);
+
+
+else
+
+price =
+SymbolInfoDouble(
+_Symbol,
+SYMBOL_BID
+);
+
+
+
+double distance =
+atr*2.0;
+
+
+
+if(buy)
+
+return price-distance;
+
+
+else
+
+return price+distance;
+
+
+}
+
+
+
+//------------------------------------------------------------
+// POSITION SIZE
+//------------------------------------------------------------
+
+double CalculateLot(
+double stopDistance
+)
+{
+
+
+double equity =
+AccountInfoDouble(
+ACCOUNT_EQUITY
+);
+
+
+
+double riskMoney =
+equity*
+(accountRisk/100.0);
+
+
+
+double tickValue =
+SymbolInfoDouble(
+_Symbol,
+SYMBOL_TRADE_TICK_VALUE
+);
+
+
+
+double tickSize =
+SymbolInfoDouble(
+_Symbol,
+SYMBOL_TRADE_TICK_SIZE
+);
+
+
+
+if(
+tickValue<=0 ||
+tickSize<=0
+)
+
+return 0.01;
+
+
+
+double lossPerLot =
+(
+stopDistance/tickSize
+)
+*
+tickValue;
+
+
+
+if(lossPerLot<=0)
+
+return 0.01;
+
+
+
+double lots =
+riskMoney/lossPerLot;
+
+
+
+return NormalizeLot(lots);
+
+
+}
+
+
+
+//------------------------------------------------------------
+// LOT NORMALIZER
+//------------------------------------------------------------
+
+double NormalizeLot(double lot)
+{
+
+
+double minLot =
+SymbolInfoDouble(
+_Symbol,
+SYMBOL_VOLUME_MIN
+);
+
+
+double maxLot =
+SymbolInfoDouble(
+_Symbol,
+SYMBOL_VOLUME_MAX
+);
+
+
+double step =
+SymbolInfoDouble(
+_Symbol,
+SYMBOL_VOLUME_STEP
+);
+
+
+
+lot =
+MathFloor(
+lot/step
+)
+*
+step;
+
+
+
+return MathMax(
+minLot,
+MathMin(
+maxLot,
+lot
+)
+);
+
+
+}
+
+
+
+//------------------------------------------------------------
+// STATE
+//------------------------------------------------------------
+
+RiskState GetState()
+{
+
+
+RiskState state;
+
+
+state.riskPercent=
+accountRisk;
+
+
+
+state.allowed =
+CheckPermission();
+
+
+
+if(!state.allowed)
+
+state.reason=
+"LOSS PROTECTION ACTIVE";
+
+else
+
+state.reason=
+"RISK OK";
+
+
+
+return state;
+
+
+}
+
+
+};
+//============================================================
+// EXECUTION STATE
+//============================================================
+
+struct ExecutionState
+{
+
+   bool hasPosition;
+
+   bool isLong;
+
+   bool isShort;
+
+
+   double entryPrice;
+
+   double stopLoss;
+
+   double takeProfit;
+
+
+};
+//+------------------------------------------------------------------+
+//|                 AEGIS Execution Engine                           |
+//|                 Order Management Layer                           |
+//+------------------------------------------------------------------+
+
+#pragma once
+
+
+#include <Trade/Trade.mqh>
+
+#include "CoreTypes.mqh"
+
+
+
+class ExecutionEngine
+{
+
+
+private:
+
+
+CTrade trade;
+
+
+ulong magic;
+
+
+int slippage;
+
+
+
+public:
+
+
+
+ExecutionEngine()
+{
+
+magic=20260729;
+
+slippage=20;
+
+}
+
+
+
+//------------------------------------------------------------
+// INITIALIZE
+//------------------------------------------------------------
+
+void Init(
+ulong magicNumber,
+int deviation
+)
+{
+
+magic=magicNumber;
+
+slippage=deviation;
+
+
+
+trade.SetExpertMagicNumber(
+magic
+);
+
+
+trade.SetDeviationInPoints(
+slippage
+);
+
+
+}
+
+
+
+//------------------------------------------------------------
+// CHECK POSITION
+//------------------------------------------------------------
+
+bool HasPosition()
+{
+
+
+for(int i=PositionsTotal()-1;i>=0;i--)
+{
+
+
+ulong ticket =
+PositionGetTicket(i);
+
+
+
+if(ticket==0)
+continue;
+
+
+
+if(PositionGetString(
+POSITION_SYMBOL
+)
+!=_Symbol)
+
+continue;
+
+
+
+if(PositionGetInteger(
+POSITION_MAGIC
+)
+!=magic)
+
+continue;
+
+
+
+return true;
+
+
+}
+
+
+return false;
+
+
+}
+
+
+
+//------------------------------------------------------------
+// OPEN BUY
+//------------------------------------------------------------
+
+bool Buy(
+double lots,
+double sl,
+double tp
+)
+{
+
+
+if(HasPosition())
+return false;
+
+
+
+double price =
+SymbolInfoDouble(
+_Symbol,
+SYMBOL_ASK
+);
+
+
+
+bool result =
+trade.Buy(
+lots,
+_Symbol,
+price,
+sl,
+tp,
+"AEGIS LONG"
+);
+
+
+
+if(!result)
+{
+
+Print(
+"AEGIS BUY FAILED: ",
+trade.ResultRetcodeDescription()
+);
+
+}
+
+
+
+return result;
+
+
+}
+
+
+
+//------------------------------------------------------------
+// OPEN SELL
+//------------------------------------------------------------
+
+bool Sell(
+double lots,
+double sl,
+double tp
+)
+{
+
+
+if(HasPosition())
+return false;
+
+
+
+double price =
+SymbolInfoDouble(
+_Symbol,
+SYMBOL_BID
+);
+
+
+
+bool result =
+trade.Sell(
+lots,
+_Symbol,
+price,
+sl,
+tp,
+"AEGIS SHORT"
+);
+
+
+
+if(!result)
+{
+
+Print(
+"AEGIS SELL FAILED: ",
+trade.ResultRetcodeDescription()
+);
+
+}
+
+
+
+return result;
+
+
+}
+
+
+
+//------------------------------------------------------------
+// CLOSE POSITION
+//------------------------------------------------------------
+
+void Close()
+{
+
+
+for(int i=PositionsTotal()-1;i>=0;i--)
+{
+
+
+ulong ticket =
+PositionGetTicket(i);
+
+
+
+if(ticket==0)
+continue;
+
+
+
+if(PositionGetString(
+POSITION_SYMBOL
+)
+!=_Symbol)
+
+continue;
+
+
+
+if(PositionGetInteger(
+POSITION_MAGIC
+)
+!=magic)
+
+continue;
+
+
+
+trade.PositionClose(
+ticket
+);
+
+
+}
+
+
+
+}
+
+
+
+//------------------------------------------------------------
+// TRADE STATE
+//------------------------------------------------------------
+
+ExecutionState GetState()
+{
+
+
+ExecutionState state;
+
+
+state.hasPosition=false;
+
+
+state.isLong=false;
+
+
+state.isShort=false;
+
+
+
+for(int i=PositionsTotal()-1;i>=0;i--)
+{
+
+
+ulong ticket =
+PositionGetTicket(i);
+
+
+
+if(ticket==0)
+continue;
+
+
+
+if(PositionGetString(
+POSITION_SYMBOL
+)
+!=_Symbol)
+
+continue;
+
+
+
+if(PositionGetInteger(
+POSITION_MAGIC
+)
+!=magic)
+
+continue;
+
+
+
+state.hasPosition=true;
+
+
+
+ENUM_POSITION_TYPE type =
+(ENUM_POSITION_TYPE)
+PositionGetInteger(
+POSITION_TYPE
+);
+
+
+
+if(type==POSITION_TYPE_BUY)
+
+state.isLong=true;
+
+
+if(type==POSITION_TYPE_SELL)
+
+state.isShort=true;
+
+
+
+state.entryPrice =
+PositionGetDouble(
+POSITION_PRICE_OPEN
+);
+
+
+
+state.stopLoss =
+PositionGetDouble(
+POSITION_SL
+);
+
+
+
+state.takeProfit =
+PositionGetDouble(
+POSITION_TP
+);
+
+
+
+}
+
+
+
+return state;
+
+
+}
+
+
+};
+//+------------------------------------------------------------------+
+//|                  AEGIS Trade Manager                             |
+//+------------------------------------------------------------------+
+
+#pragma once
+
+
+#include <Trade/Trade.mqh>
+
+
+
+class TradeManager
+{
+
+
+private:
+
+
+CTrade trade;
+
+
+
+public:
+
+
+
+//------------------------------------------------------------
+// BREAK EVEN
+//------------------------------------------------------------
+
+void MoveToBreakEven()
+{
+
+
+for(int i=PositionsTotal()-1;i>=0;i--)
+{
+
+
+ulong ticket =
+PositionGetTicket(i);
+
+
+if(ticket==0)
+continue;
+
+
+
+double open =
+PositionGetDouble(
+POSITION_PRICE_OPEN
+);
+
+
+
+double sl =
+PositionGetDouble(
+POSITION_SL
+);
+
+
+
+ENUM_POSITION_TYPE type =
+(ENUM_POSITION_TYPE)
+PositionGetInteger(
+POSITION_TYPE
+);
+
+
+
+double bid =
+SymbolInfoDouble(
+_Symbol,
+SYMBOL_BID
+);
+
+
+double ask =
+SymbolInfoDouble(
+_Symbol,
+SYMBOL_ASK
+);
+
+
+
+if(type==POSITION_TYPE_BUY)
+{
+
+
+if(bid-open > 
+(open-sl))
+{
+
+
+trade.PositionModify(
+ticket,
+open,
+0
+);
+
+
+}
+
+
+}
+
+
+
+if(type==POSITION_TYPE_SELL)
+{
+
+
+if(open-ask >
+(sl-open))
+{
+
+
+trade.PositionModify(
+ticket,
+open,
+0
+);
+
+
+}
+
+
+
+}
+
+
+}
+
+
+
+}
+
+
+
+};
+//+------------------------------------------------------------------+
+//|                         AEGIS                                   |
+//|       Institutional Market Intelligence Trading Engine            |
+//+------------------------------------------------------------------+
+
+#property copyright "AEGIS Quant"
+#property version   "1.00"
+
+
+#include <Trade/Trade.mqh>
+
+
+#include "CoreTypes.mqh"
+
+#include "MarketCache.mqh"
+
+#include "ATREngine.mqh"
+
+#include "MarketStructure.mqh"
+
+#include "VWAPEngine.mqh"
+
+#include "VolumeProfile.mqh"
+
+#include "LiquidityEngine.mqh"
+
+#include "RegimeEngine.mqh"
+
+#include "ConfidenceEngine.mqh"
+
+#include "RiskEngine.mqh"
+
+#include "ExecutionEngine.mqh"
+
+#include "TradeManager.mqh"
+
+
+
+//============================================================
+// MODULE OBJECTS
+//============================================================
+
+
+MarketCache market;
+
+
+ATREngine atr;
+
+
+MarketStructureEngine structure;
+
+
+VWAPEngine vwap;
+
+
+VolumeProfileEngine volume;
+
+
+LiquidityEngine liquidity;
+
+
+RegimeEngine regime;
+
+
+ConfidenceEngine confidence;
+
+
+RiskEngine risk;
+
+
+ExecutionEngine execution;
+
+
+TradeManager manager;
+
+
+
+datetime lastBar;
+
+
+
+//============================================================
+// INPUTS
+//============================================================
+
+
+input ulong MagicNumber = 20260729;
+
+
+input double RiskPercent = 1.0;
+
+
+
+input int UpdateTimeframeBars = 500;
+
+
+
+//============================================================
+// INITIALIZATION
+//============================================================
+
+
+int OnInit()
+{
+
+
+Print(
+"AEGIS INITIALIZING..."
+);
+
+
+
+//------------------------------
+// Initialize market
+//------------------------------
+
+
+market.Init(
+_Symbol,
+_Period,
+UpdateTimeframeBars
+);
+
+
+
+//------------------------------
+// Initialize engines
+//------------------------------
+
+
+atr.Init(
+market
+);
+
+
+
+structure.Init(
+market
+);
+
+
+
+vwap.Init(
+market
+);
+
+
+
+volume.Init(
+market
+);
+
+
+
+liquidity.Init(
+market
+);
+
+
+
+risk.SetRisk(
+RiskPercent
+);
+
+
+
+execution.Init(
+MagicNumber,
+20
+);
+
+
+
+
+lastBar =
+iTime(
+_Symbol,
+_Period,
+0
+);
+
+
+
+Print(
+"AEGIS ONLINE"
+);
+
+
+
+return INIT_SUCCEEDED;
+
+
+}
+
+
+
+//============================================================
+// MAIN LOOP
+//============================================================
+
+
+void OnTick()
+{
+
+
+datetime currentBar =
+iTime(
+_Symbol,
+_Period,
+0
+);
+
+
+
+bool newBar =
+(
+currentBar != lastBar
+);
+
+
+
+if(newBar)
+
+lastBar=currentBar;
+
+
+
+//============================================================
+// UPDATE MARKET DATA
+//============================================================
+
+
+market.Update();
+
+
+
+
+//============================================================
+// UPDATE ANALYSIS MODULES
+//============================================================
+
+
+atr.Update();
+
+
+structure.Update();
+
+
+vwap.Update();
+
+
+volume.Update();
+
+
+liquidity.Update();
+
+
+
+//============================================================
+// BUILD MARKET VIEW
+//============================================================
+
+
+RegimeState regimeState;
+
+
+
+regime.Update(
+
+structure.GetState(),
+
+vwap.GetState(),
+
+atr.GetState(),
+
+volume.GetState(),
+
+liquidity.GetState()
+
+);
+
+
+
+regimeState =
+regime.GetState();
+
+
+
+
+//============================================================
+// SCORE OPPORTUNITY
+//============================================================
+
+
+
+confidence.Calculate(
+
+regimeState,
+
+structure.GetState(),
+
+vwap.GetState(),
+
+volume.GetState(),
+
+liquidity.GetState(),
+
+GetMomentum()
+
+);
+
+
+
+ConfidenceState decision =
+confidence.GetState();
+
+
+
+
+//============================================================
+// TRADE DECISION
+//============================================================
+
+
+
+if(
+decision.allowTrade
+&&
+newBar
+)
+
+{
+
+
+RiskState riskState =
+risk.GetState();
+
+
+
+if(
+riskState.allowed
+)
+
+{
+
+
+ExecuteDecision(
+decision
+);
+
+
+}
+
+
+}
+
+
+
+//============================================================
+// POSITION MANAGEMENT
+//============================================================
+
+
+manager.MoveToBreakEven();
+
+
+
+//============================================================
+// DISPLAY
+//============================================================
+
+
+Dashboard(
+regimeState,
+decision
+);
+
+
+
+}
+
+
+
+//============================================================
+// EXECUTION LOGIC
+//============================================================
+
+
+void ExecuteDecision(
+ConfidenceState decision
+)
+{
+
+
+double atrValue =
+atr.GetValue();
+
+
+
+double lots =
+risk.CalculateLot(
+atrValue*2
+);
+
+
+
+if(decision.allowLong)
+{
+
+
+double sl =
+risk.CalculateStop(
+atrValue,
+true
+);
+
+
+
+execution.Buy(
+lots,
+sl,
+0
+);
+
+
+Print(
+"AEGIS LONG EXECUTED"
+);
+
+
+}
+
+
+
+
+if(decision.allowShort)
+{
+
+
+double sl =
+risk.CalculateStop(
+atrValue,
+false
+);
+
+
+
+execution.Sell(
+lots,
+sl,
+0
+);
+
+
+Print(
+"AEGIS SHORT EXECUTED"
+);
+
+
+}
+
+
+
+}
+
+
+
+//============================================================
+// MOMENTUM PLACEHOLDER
+//============================================================
+
+MomentumState GetMomentum()
+{
+
+
+MomentumState state;
+
+
+
+// temporary
+
+state.bullish=false;
+
+state.bearish=false;
+
+
+
+return state;
+
+
+}
+
+
+
+//============================================================
+// DASHBOARD
+//============================================================
+
+
+void Dashboard(
+RegimeState regime,
+ConfidenceState confidence
+)
+{
+
+
+string text;
+
+
+text =
+"===== AEGIS =====\n";
+
+
+text+=
+"Regime: "
++
+regime.description
++
+"\n";
+
+
+text+=
+"Confidence: "
++
+DoubleToString(
+confidence.totalScore,
+1
+)
++
+"\n";
+
+
+text+=
+"Grade: "
++
+confidence.grade
++
+"\n";
+
+
+text+=
+"LONG SCORE: "
++
+DoubleToString(
+confidence.longScore,
+1
+)
++
+"\n";
+
+
+text+=
+"SHORT SCORE: "
++
+DoubleToString(
+confidence.shortScore,
+1
+);
+
+
+
+Comment(text);
+
+
+}
